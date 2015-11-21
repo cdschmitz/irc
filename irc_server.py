@@ -20,7 +20,7 @@ MESSAGE_END = '\r\n'
 
 CHANNEL_RE = re.compile(r'^#[_a-zA-Z]\w{0,30}$')
 NICK_RE = re.compile(r'^[_a-zA-Z]\w{0,31}$')
-VALID_CLIENT_MESSAGE_RE = re.compile(r'^(?P<command>[A-Z]+)(?: |$)')
+VALID_CLIENT_MESSAGE_RE = re.compile(r'^\s*(?P<command>[A-Z]+)(?: |$)')
 
 NICK_CHANGE_ACCEPTED = 301
 CHANNEL_JOINED = 302
@@ -35,8 +35,7 @@ USERNAME_UNAVAILABLE = 403
 INVALID_CHANNEL_FORMAT = 404
 CHANNEL_ALREADY_JOINED = 405
 CHANNEL_NOT_JOINED = 406
-NO_ACTIVE_CHANNELS = 407
-NONEXISTENT_CHANNEL = 408
+NONEXISTENT_CHANNEL = 407
 
 
 class IRCServer(object):
@@ -56,7 +55,7 @@ class IRCServer(object):
 
         self.server_socket = server_socket
         self.client_connections = {}
-        self.user_index = 1  # For giving clients an initial name
+        self.user_index = 1
 
         self.handlers = {
             'JOIN': self._process_join_command,
@@ -166,7 +165,6 @@ class IRCServer(object):
         active channels. If the channel is present, respond with the usernames
         of clients in the channel.
         Error responses:
-          - No channels exist yet
           - Invalid channel format
           - Attempt to list channel that does not exist
         """
@@ -174,8 +172,6 @@ class IRCServer(object):
             channel_sets = [info['channels']
                             for info in self.client_connections.values()]
             channels = reduce(lambda a, b: a.union(b), channel_sets, set())
-            if not channels:
-                return self._send_error(client_socket, NO_ACTIVE_CHANNELS)
             return self._send_reply(client_socket, CHANNEL_LIST, *channels)
 
         if not CHANNEL_RE.match(channel):
