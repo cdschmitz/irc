@@ -20,6 +20,8 @@ MESSAGE_END = '\r\n'
 
 CHANNEL_RE = re.compile(r'^#[_a-zA-Z]\w{0,30}$')
 NICK_RE = re.compile(r'^[_a-zA-Z]\w{0,31}$')
+PUBLIC_MESSAGE_RE = re.compile(r'^(?P<channel>#[_a-zA-Z]\w{0,30})'
+                                ' (?P<message>.*)$')
 VALID_CLIENT_MESSAGE_RE = re.compile(r'^\s*(?P<command>[A-Z]+)(?: |$)')
 
 NICK_CHANGE_ACCEPTED = 301
@@ -36,6 +38,7 @@ INVALID_CHANNEL_FORMAT = 404
 CHANNEL_ALREADY_JOINED = 405
 CHANNEL_NOT_JOINED = 406
 NONEXISTENT_CHANNEL = 407
+EMPTY_MESSAGE = 408
 
 
 class IRCServer(object):
@@ -66,6 +69,12 @@ class IRCServer(object):
             'PRVMSG': self._process_private_message,
             'QUIT': self._process_quit_command
         }
+
+    @property
+    def _active_channels(self):
+        channel_sets = [info['channels']
+                        for info in self.client_connections.values()]
+        return reduce(lambda a, b: a.union(b), channel_sets, set())
 
     def _close_client_connection(self, client_socket):
         """
@@ -185,8 +194,22 @@ class IRCServer(object):
         return self._send_reply(client_socket, USERS_IN_CHANNEL,
                                 channel, *usernames_in_channel)
 
-    def _process_message(self, client_socket, message):
-        print message
+    def _process_message(self, client_socket, message_args):
+        message_match = PUBLIC_MESSAGE_RE.match(message_args)
+        if not message_match:
+            return self._send_error(client_socket, UNRECOGNIZED_CLIENT_MESSAGE)
+
+        match_dict = message_match.groupdict()
+        channel = match_dict['channel']
+        message = match_dict['message']
+        if channel not in self._active_channels:
+            return self._send_error(client_socket, NONEXISTENT_CHANNEL)
+
+        receiving_sockets = set(socket for socket, state in
+                                self.client_connections.iteritems()
+                                if channel in state['channels'])
+        for socket in receiving_sockets:
+            print message
 
     def _process_nick_command(self, client_socket, nick):
         """
