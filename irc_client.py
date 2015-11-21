@@ -46,7 +46,8 @@ class IRCClient(object):
                         if not input_chunk:
                             sys.exit('Connection terminated by server')
 
-                        socket_input = ''.join([self.socket_buffer, input_chunk])
+                        socket_input = ''.join([self.socket_buffer,
+                                                input_chunk])
                         messages = socket_input.split(MESSAGE_END)
                         self.socket_buffer = messages.pop()
                         for message in messages:
