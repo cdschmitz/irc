@@ -41,10 +41,13 @@ INVALID_CHANNEL_FORMAT = 404
 CHANNEL_ALREADY_JOINED = 405
 CHANNEL_NOT_JOINED = 406
 NONEXISTENT_CHANNEL = 407
-EMPTY_MESSAGE = 408
+NONEXISTENT_USER = 408
+EMPTY_MESSAGE = 409
 
 CHANNEL_RE = re.compile(r'^#[_a-zA-Z]\w{0,30}$')
 NICK_RE = re.compile(r'^[_a-zA-Z]\w{0,31}$')
+PRIVATE_MESSAGE_RE = re.compile(r'^(?P<username>[_a-zA-Z]\w{0,31})'
+                                ' (?P<message>.*)$')
 PUBLIC_MESSAGE_RE = re.compile(r'^(?P<channel>#[_a-zA-Z]\w{0,30})'
                                ' (?P<message>.*)$')
 VALID_CLIENT_MESSAGE_RE = re.compile(r'^\s*(?P<command>[A-Z]+)(?: |$)')
@@ -73,7 +76,7 @@ class IRCServer(object):
             'JOIN': self._process_join_command,
             'LEAVE': self._process_leave_command,
             'LIST': self._process_list_command,
-            'MSG': self._process_message,
+            'MSG': self._process_public_message,
             'NICK': self._process_nick_command,
             'PRVMSG': self._process_private_message,
             'QUIT': self._process_quit_command
@@ -84,6 +87,11 @@ class IRCServer(object):
         channel_sets = [state['channels']
                         for state in self.client_connections.values()]
         return reduce(lambda a, b: a.union(b), channel_sets, set())
+
+    @property
+    def _active_usernames(self):
+        return set(state['username']
+                   for state in self.client_connections.values())
 
     def _close_client_connection(self, client_socket):
         """
@@ -107,7 +115,11 @@ class IRCServer(object):
         input_buffer = ''.join([client_state['input_buffer'], input_chunk])
         messages = input_buffer.split(MESSAGE_END)
         client_state['input_buffer'] = messages.pop()
+        logging.debug('Input Buffer: {}'.format(client_state['input_buffer']))
+
         for message in messages:
+            logging.debug('Received message: {}'.format(message))
+
             command_match = VALID_CLIENT_MESSAGE_RE.match(message)
             if command_match:
                 command = command_match.groupdict()['command']
@@ -123,12 +135,14 @@ class IRCServer(object):
         Set up state info for newly connected client
         """
         connection, addr = self.server_socket.accept()
-        self.client_connections[connection] = {
+        client_state = {
             'channels': set(),
             'input_buffer': '',
             'username': 'user{}'.format(self.user_index)
         }
+        self.client_connections[connection] = client_state
         self.user_index += 1
+        logging.debug('Created new connection: {}'.format(str(client_state)))
 
     def _process_invalid_message(self, client_socket, message):
         """
@@ -145,6 +159,8 @@ class IRCServer(object):
           - Invalid channel format
           - Channel already joined
         """
+        logging.debug("JOIN: '{}'".format(channel))
+
         if not CHANNEL_RE.match(channel):
             return self._send_reply(client_socket, INVALID_CHANNEL_FORMAT)
 
@@ -164,6 +180,8 @@ class IRCServer(object):
           - Invalid channel format
           - Channel not currently joined
         """
+        logging.debug("LEAVE: '{}'".format(channel))
+
         if not CHANNEL_RE.match(channel):
             return self._send_reply(client_socket, INVALID_CHANNEL_FORMAT)
 
@@ -186,6 +204,8 @@ class IRCServer(object):
           - Invalid channel format
           - Attempt to list channel that does not exist
         """
+        logging.debug("LIST: '{}'".format(channel))
+
         if not channel:
             return self._send_reply(client_socket, CHANNEL_LIST,
                                     *self._active_channels)
@@ -200,7 +220,71 @@ class IRCServer(object):
         return self._send_reply(client_socket, USERS_IN_CHANNEL,
                                 channel, *usernames_in_channel)
 
-    def _process_message(self, client_socket, message_args):
+    def _process_nick_command(self, client_socket, nick):
+        """
+        Handle a NICK command from a client requesting to change username.
+        Error responses sent for:
+          - Invalid nick format
+          - Current nick already matches requested nick
+          - A different user has already been given the requested nick
+        """
+        logging.debug("NICK: '{}'".format(nick))
+
+        if not NICK_RE.match(nick):
+            return self._send_reply(client_socket, INVALID_NICK_FORMAT)
+
+        client_state = self.client_connections[client_socket]
+        current_username = client_state['username']
+        if nick == current_username:
+            return self._send_reply(client_socket, USERNAME_ALREADY_CURRENT)
+
+        if nick in self._active_usernames:
+            return self._send_reply(client_socket, USERNAME_UNAVAILABLE)
+
+        client_state['username'] = nick
+        self.client_connections[client_socket] = client_state
+        return self._send_reply(client_socket, NICK_CHANGE_ACCEPTED, nick)
+
+    def _process_private_message(self, client_socket, message_args):
+        """
+        Handle a PRVMSG command from a client sending a message directly
+        to another.
+        Error responses sent for:
+          - Unrecognized private message args, the receiving username must be
+            present
+          - Specified recipient doesnt exist
+        """
+        logging.debug("PRVMSG: '{}'".format(message_args))
+
+        message_match = PRIVATE_MESSAGE_RE.match(message_args)
+        if not message_match:
+            return self._send_reply(client_socket, UNRECOGNIZED_CLIENT_MESSAGE)
+
+        match_dict = message_match.groupdict()
+        receiving_username = match_dict['username']
+        message = match_dict['message']
+        if receiving_username not in self._active_usernames:
+            return self._send_reply(client_socket, NONEXISTENT_USER)
+
+        sending_username = self.client_connections[client_socket]['username']
+        receiving_sockets = set(receiving_socket for receiving_socket, state in
+                                self.client_connections.iteritems()
+                                if receiving_username == state['username'])
+        for client_socket in receiving_sockets:
+            self._send_message(client_socket, PRIVATE,
+                               sending_username, message)
+
+    def _process_public_message(self, client_socket, message_args):
+        """
+        Handle a MSG command from a client sending a public message to a
+        channel.
+        Error responses sent for:
+          - Unrecognized public message args, the receiving channel must be
+            present
+          - Specified channel doesnt exist
+        """
+        logging.debug("MSG: '{}'".format(message_args))
+
         message_match = PUBLIC_MESSAGE_RE.match(message_args)
         if not message_match:
             return self._send_reply(client_socket, UNRECOGNIZED_CLIENT_MESSAGE)
@@ -212,45 +296,18 @@ class IRCServer(object):
             return self._send_reply(client_socket, NONEXISTENT_CHANNEL)
 
         sending_username = self.client_connections[client_socket]['username']
-        receiving_sockets = set(client_socket for client_socket, state in
+        receiving_sockets = set(receiving_socket for receiving_socket, state in
                                 self.client_connections.iteritems()
                                 if channel in state['channels'])
-        for client_socket in receiving_sockets:
-            self._send_message(client_socket, PUBLIC,
+        for receiving_socket in receiving_sockets:
+            self._send_message(receiving_socket, PUBLIC,
                                sending_username, channel, message)
-
-    def _process_nick_command(self, client_socket, nick):
-        """
-        Handle a NICK command from a client requesting to change username.
-        Error responses sent for:
-          - Invalid nick format
-          - Current nick already matches requested nick
-          - A different user has already been given the requested nick
-        """
-        if not NICK_RE.match(nick):
-            return self._send_reply(client_socket, INVALID_NICK_FORMAT)
-
-        client_state = self.client_connections[client_socket]
-        current_username = client_state['username']
-        if nick == current_username:
-            return self._send_reply(client_socket, USERNAME_ALREADY_CURRENT)
-
-        active_usernames = set(state['username'] for state
-                               in self.client_connections.values())
-        if nick in active_usernames:
-            return self._send_reply(client_socket, USERNAME_UNAVAILABLE)
-
-        client_state['username'] = nick
-        self.client_connections[client_socket] = client_state
-        return self._send_reply(client_socket, NICK_CHANGE_ACCEPTED, nick)
-
-    def _process_private_message(self, client_socket, private_message):
-        print private_message
 
     def _process_quit_command(self, client_socket, _):
         """
         QUIT command detected by client, no further processing needed
         """
+        logging.debug("Received QUIT")
         self._close_client_connection(client_socket)
 
     def _send_message(self, client_socket, msg_code, *args):
@@ -260,11 +317,13 @@ class IRCServer(object):
         return self._send_to_client(client_socket, REPLY, reply_code, *args)
 
     def _send_to_client(self, client_socket, message_type, code, *args):
-        return client_socket.send('{message_type} {code} {args}{end}'.format(
+        response = '{message_type} {code} {args}{end}'.format(
             message_type=message_type,
             code=code,
             args=' '.join(args),
-            end=MESSAGE_END))
+            end=MESSAGE_END)
+        logging.debug('Response: {}'.format(response))
+        return client_socket.send(response)
 
     def serve_forever(self):
         """
@@ -291,7 +350,7 @@ class IRCServer(object):
         except KeyboardInterrupt:
             pass
         finally:
-            logging.debug('\n\nServer shutdown: closing client connections')
+            logging.info('\n\nServer shutdown: closing client connections')
             for client_socket in self.client_connections.keys():
                 client_socket.close()
             server_socket.close()
