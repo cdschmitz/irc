@@ -211,11 +211,13 @@ class IRCServer(object):
         if channel not in self._active_channels:
             return self._send_reply(client_socket, NONEXISTENT_CHANNEL)
 
-        receiving_sockets = set(socket for socket, state in
+        sending_username = self.client_connections[client_socket]['username']
+        receiving_sockets = set(client_socket for client_socket, state in
                                 self.client_connections.iteritems()
                                 if channel in state['channels'])
-        for _socket in receiving_sockets:
-            print message
+        for client_socket in receiving_sockets:
+            self._send_message(client_socket, PUBLIC,
+                               sending_username, channel, message)
 
     def _process_nick_command(self, client_socket, nick):
         """
