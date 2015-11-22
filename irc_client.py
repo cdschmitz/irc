@@ -44,7 +44,7 @@ class IRCClient(object):
                     if ready_source == self.client_socket:
                         input_chunk = self.client_socket.recv(BUF_SIZE)
                         if not input_chunk:
-                            sys.exit('Connection terminated by server')
+                            sys.exit('Connection terminated, exiting')
 
                         socket_input = ''.join([self.socket_buffer,
                                                 input_chunk])
