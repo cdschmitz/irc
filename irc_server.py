@@ -21,9 +21,13 @@ MESSAGE_END = '\r\n'
 MESSAGE = 'MSG'
 REPLY = 'RPL'
 
-# Mesage codes
-PUBLIC = 200
-PRIVATE = 201
+# Message codes
+PUBLIC_MESSAGE = 200
+PRIVATE_MESSAGE = 201
+CLIENT_CONNECTED = 202
+CLIENT_DISCONNECTED = 203
+CLIENT_JOINED_CHANNEL = 204
+CLIENT_LEFT_CHANNEL = 205
 
 # Standard reply codes
 NICK_CHANGE_ACCEPTED = 301
@@ -69,7 +73,8 @@ class IRCServer(object):
         logging.info('IRC Server running on port {}...'.format(port))
 
         self.server_socket = server_socket
-        self.client_connections = {}
+        self.connections = {}
+        self.users = {}
         self.user_index = 1
 
         self.handlers = {
@@ -82,25 +87,23 @@ class IRCServer(object):
             'QUIT': self._process_quit_command
         }
 
-    @property
-    def _active_channels(self):
-        channel_sets = [state['channels']
-                        for state in self.client_connections.values()]
-        return reduce(lambda a, b: a.union(b), channel_sets, set())
-
-    @property
-    def _active_usernames(self):
-        return set(state['username']
-                   for state in self.client_connections.values())
-
     def _close_client_connection(self, client_socket):
         """
         Remove the client from the list of connections and close the socket
         """
         conn_state = str(client_socket.getpeername())
-        del self.client_connections[client_socket]
+        username = self.connections[client_socket]
+        del self.connections[client_socket]
+        del self.users[username]
+        for connection in self.connections:
+            self._send_message(connection, CLIENT_DISCONNECTED)
         client_socket.close()
         logging.debug('Client terminated connection: {}'.format(conn_state))
+
+    def _get_users_in_channel(self, channel):
+        return set(username
+                   for state['username'] in self.connections.values()
+                   if channel in state['channels'])
 
     def _handle_client_input(self, client_socket, input_chunk):
         """
@@ -111,10 +114,12 @@ class IRCServer(object):
         Otherwise a reply is returned to the client that their message was
         invalid.
         """
-        client_state = self.client_connections[client_socket]
+        client_state = self.connections[client_socket]
+
         input_buffer = ''.join([client_state['input_buffer'], input_chunk])
         messages = input_buffer.split(MESSAGE_END)
         client_state['input_buffer'] = messages.pop()
+        self.connections[client_socket] = client_state
         logging.debug('Input Buffer: {}'.format(client_state['input_buffer']))
 
         for message in messages:
@@ -135,14 +140,23 @@ class IRCServer(object):
         Set up state info for newly connected client
         """
         connection, addr = self.server_socket.accept()
-        client_state = {
+
+        active_usernames = self.users.keys()
+        username = 'user{}'.format(self.user_index)
+        while username in active_usernames:
+            self.user_index += 1
+
+        self.users[username] = connection
+        self.connections[connection] = {
             'channels': set(),
             'input_buffer': '',
-            'username': 'user{}'.format(self.user_index)
+            'username': username
         }
-        self.client_connections[connection] = client_state
-        self.user_index += 1
-        logging.debug('Created new connection: {}'.format(str(client_state)))
+
+        connection_state = str(connection.getpeername())
+        logging.debug("{user} {state} connected".format(
+            user=username,
+            state=connection_state))
 
     def _process_invalid_message(self, client_socket, message):
         """
@@ -164,16 +178,21 @@ class IRCServer(object):
         if not CHANNEL_RE.match(channel):
             return self._send_reply(client_socket, INVALID_CHANNEL_FORMAT)
 
-        client_state = self.client_connections[client_socket]
-        joined_channels = client_state['channels']
-        if channel in joined_channels:
+        client_state = self.connections[client_socket]
+        if channel in client_state['channels']:
             return self._send_reply(client_socket, CHANNEL_ALREADY_JOINED)
 
+        joining_user = client_state['username']
+        for other_user in self._get_users_in_channel(channel)
+            receiving_socket = self.user[other_user]
+            self._send_message(receiving_socket, CLIENT_JOINED_CHANNEL,
+                               joining_user, channel)
+
         client_state['channels'].add(channel)
-        self.client_connections[client_socket] = client_state
+        self.connections[client_socket] = client_state
         return self._send_reply(client_socket, CHANNEL_JOINED, channel)
 
-    def _process_leave_command(self, client_socket, channel):
+    def _process_leave_command(self, client_socket, username, channel):
         """
         Handle a LEAVE command from a client.
         Error responses:
@@ -185,16 +204,24 @@ class IRCServer(object):
         if not CHANNEL_RE.match(channel):
             return self._send_reply(client_socket, INVALID_CHANNEL_FORMAT)
 
-        client_state = self.client_connections[client_socket]
-        joined_channels = client_state['channels']
-        if channel not in joined_channels:
+        client_state = self.user_state[username]
+        if channel not in client_state['channels']:
             return self._send_reply(client_socket, CHANNEL_NOT_JOINED)
 
-        client_state['channels'].remove(channel)
-        self.client_connections[client_socket] = client_state
+        client_state['channels'].discard(channel)
+        self.user_state[username] = client_state
+
+        for other_user in self.channels[channel]:
+            receiving_socket = self.user_state[other_user]['socket']
+            self._send_message(receiving_socket, CLIENT_LEFT_CHANNEL,
+                               username, channel)
+
+        self.channels[channel].discard(username)
+        if not self.channels[channel]:
+            del self.channels[channel]
         return self._send_reply(client_socket, CHANNEL_LEFT, channel)
 
-    def _process_list_command(self, client_socket, channel):
+    def _process_list_command(self, client_socket, username, channel):
         """
         Handle a LIST command from a client.
         If no channel argument is provided, the server responds with a list of
@@ -213,14 +240,14 @@ class IRCServer(object):
         if not CHANNEL_RE.match(channel):
             return self._send_reply(client_socket, INVALID_CHANNEL_FORMAT)
 
-        usernames_in_channel = set(state['username']
-                                   for state in
-                                   self.client_connections.values()
-                                   if channel in state['channels'])
+        if channel not in self.channels:
+            return self._send_reply(client_socket, NONEXISTENT_CHANNEL)
+
+        usernames_in_channel = self.channels[channel]
         return self._send_reply(client_socket, USERS_IN_CHANNEL,
                                 channel, *usernames_in_channel)
 
-    def _process_nick_command(self, client_socket, nick):
+    def _process_nick_command(self, client_socket, username, nick):
         """
         Handle a NICK command from a client requesting to change username.
         Error responses sent for:
@@ -233,16 +260,17 @@ class IRCServer(object):
         if not NICK_RE.match(nick):
             return self._send_reply(client_socket, INVALID_NICK_FORMAT)
 
-        client_state = self.client_connections[client_socket]
-        current_username = client_state['username']
-        if nick == current_username:
+        if username == nick:
             return self._send_reply(client_socket, USERNAME_ALREADY_CURRENT)
 
-        if nick in self._active_usernames:
+        if nick in self.user_state:
             return self._send_reply(client_socket, USERNAME_UNAVAILABLE)
 
-        client_state['username'] = nick
-        self.client_connections[client_socket] = client_state
+        self.connections[client_socket] = nick
+        self.user_state[nick] = self.user_state[username]
+        del self.user_state[username]
+
+        for channel in self.user_state[nick][channels]:
         return self._send_reply(client_socket, NICK_CHANGE_ACCEPTED, nick)
 
     def _process_private_message(self, client_socket, message_args):
@@ -271,7 +299,7 @@ class IRCServer(object):
                                 self.client_connections.iteritems()
                                 if receiving_username == state['username'])
         for client_socket in receiving_sockets:
-            self._send_message(client_socket, PRIVATE,
+            self._send_message(client_socket, PRIVATE_MESSAGE,
                                sending_username, message)
 
     def _process_public_message(self, client_socket, message_args):
@@ -300,7 +328,7 @@ class IRCServer(object):
                                 self.client_connections.iteritems()
                                 if channel in state['channels'])
         for receiving_socket in receiving_sockets:
-            self._send_message(receiving_socket, PUBLIC,
+            self._send_message(receiving_socket, PUBLIC_MESSAGE,
                                sending_username, channel, message)
 
     def _process_quit_command(self, client_socket, _):
