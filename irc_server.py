@@ -181,8 +181,6 @@ class IRCServer(object):
           - Invalid channel format
           - Channel already joined
         """
-        logging.debug("JOIN: '{}'".format(channel))
-
         if not CHANNEL_RE.match(channel):
             return self._send_reply(client_socket, INVALID_CHANNEL_FORMAT)
 
@@ -207,8 +205,6 @@ class IRCServer(object):
           - Invalid channel format
           - Channel not currently joined
         """
-        logging.debug("LEAVE: '{}'".format(channel))
-
         if not CHANNEL_RE.match(channel):
             return self._send_reply(client_socket, INVALID_CHANNEL_FORMAT)
 
@@ -236,8 +232,6 @@ class IRCServer(object):
           - Invalid channel format
           - Attempt to list channel that does not exist
         """
-        logging.debug("LIST: '{}'".format(channel))
-
         if not channel:
             return self._send_reply(client_socket, CHANNEL_LIST,
                                     *self._active_channels)
@@ -260,8 +254,6 @@ class IRCServer(object):
           - Current nick already matches requested nick
           - A different user has already been given the requested nick
         """
-        logging.debug("NICK: '{}'".format(nick))
-
         if not NICK_RE.match(nick):
             return self._send_reply(client_socket, INVALID_NICK_FORMAT)
 
@@ -290,8 +282,6 @@ class IRCServer(object):
             present
           - Specified recipient doesnt exist
         """
-        logging.debug("PRVMSG: '{}'".format(message_args))
-
         message_match = PRIVATE_MESSAGE_RE.match(message_args)
         if not message_match:
             return self._send_reply(client_socket, UNRECOGNIZED_CLIENT_MESSAGE)
@@ -316,8 +306,6 @@ class IRCServer(object):
             present
           - Specified channel doesnt exist
         """
-        logging.debug("MSG: '{}'".format(message_args))
-
         message_match = PUBLIC_MESSAGE_RE.match(message_args)
         if not message_match:
             return self._send_reply(client_socket, UNRECOGNIZED_CLIENT_MESSAGE)
@@ -339,7 +327,6 @@ class IRCServer(object):
         """
         QUIT command detected by client, no further processing needed
         """
-        logging.debug("Received QUIT")
         self._close_client_connection(client_socket)
 
     def _send_message(self, client_socket, msg_code, *args):
