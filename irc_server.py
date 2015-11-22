@@ -75,7 +75,7 @@ class IRCServer(object):
         self.server_socket = server_socket
         self.connections = {}
         self.users = {}
-        self.user_index = 1
+        self.user_index = 0
 
         self.handlers = {
             'JOIN': self._process_join_command,
@@ -149,10 +149,10 @@ class IRCServer(object):
 
         active_usernames = self.users.keys()
         while True:
+            self.user_index += 1
             username = 'user{}'.format(self.user_index)
             if username not in active_usernames:
                 break
-            self.user_index += 1
 
         self.users[username] = connection
         self.connections[connection] = {
