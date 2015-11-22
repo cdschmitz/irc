@@ -148,8 +148,10 @@ class IRCServer(object):
         connection, addr = self.server_socket.accept()
 
         active_usernames = self.users.keys()
-        username = 'user{}'.format(self.user_index)
-        while username in active_usernames:
+        while True:
+            username = 'user{}'.format(self.user_index)
+            if username not in active_usernames:
+                break
             self.user_index += 1
 
         self.users[username] = connection
