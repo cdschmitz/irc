@@ -126,7 +126,6 @@ class IRCServer(object):
         messages = input_buffer.split(MESSAGE_END)
         client_state['input_buffer'] = messages.pop()
         self.connections[client_socket] = client_state
-        logging.debug('Input Buffer: {}'.format(client_state['input_buffer']))
 
         for message in messages:
             logging.debug('Received message: {}'.format(message))
@@ -269,7 +268,7 @@ class IRCServer(object):
         del self.users[current_nick]
         client_state['username'] = nick
         self.connections[client_socket] = client_state
-        # TODO: Find connected users, share nick change
+        # TODO: Find 'connected' users, share nick change
 
         return self._send_reply(client_socket, NICK_CHANGE_ACCEPTED, nick)
 
