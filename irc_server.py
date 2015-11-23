@@ -344,6 +344,25 @@ class IRCServer(object):
         logging.debug('Response: {}'.format(response))
         return client_socket.send(response)
 
+    def _show_server_state(self):
+        """
+        Hit Enter while the server is running in debug mode to dump server
+        state to the console.
+        """
+        logging.debug('Connections:')
+        for connection, client_state in self.connections.iteritems():
+            logging.debug('\tSocket: {}'.format(connection))
+            logging.debug('\tChannels: {}'.format(client_state['channels']))
+            logging.debug('\tInput Buffer: {}'
+                          .format(client_state['input_buffer']))
+            logging.debug('\tUsername: {}\n'.format(client_state['username']))
+
+        logging.debug('Users:')
+        for username, connection in self.users.iteritems():
+            logging.debug('\tSocket: {}'.format(connection))
+            logging.debug('\tUsername: {}\n'.format(username))
+        return
+
     def serve_forever(self):
         """
         Run the IRC server indefinitely. Use the select library to monitor
@@ -355,11 +374,15 @@ class IRCServer(object):
         try:
             while True:
                 all_connections = (
-                    [self.server_socket] + self.connections.keys())
+                    [self.server_socket, sys.stdin] +
+                    self.connections.keys())
                 input_sockets, _, _ = select.select(all_connections, [], [])
                 for ready_socket in input_sockets:
                     if ready_socket == self.server_socket:
                         self._initialize_client_connection()
+                    elif ready_socket == sys.stdin:
+                        sys.stdin.readline()
+                        self._show_server_state()
                     else:
                         chunk = ready_socket.recv(BUF_SIZE)
                         if not chunk:
