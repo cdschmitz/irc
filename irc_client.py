@@ -58,15 +58,23 @@ class IRCClient(object):
         print '\nChris Schmitz CS494 IRC Client'
         print 'Type "/help" for list of commands\n'
 
-    def _error_handler(self, error_code, _):
-        error = '  ERROR: {}\n'.format(self.error_text[error_code])
-        sys.stdout.write(error)
+    def _display_message(self, message):
+        sys.stdout.write('\n  *** {}\n'.format(message))
         sys.stdout.flush()
+
+    def _display_response(self, message):
+        sys.stdout.write('*** {}\n'.format(message))
+        sys.stdout.flush()
+
+    def _error_handler(self, error_code, _):
+        error = 'ERROR: {}'.format(self.error_text[error_code])
+        self._display_response(error)
 
     def _handle_channel_join(self, joined_channel):
         self.channels.add(joined_channel)
         if not self.current_channel:
             self.current_channel = joined_channel
+        self._display_response('Joined {}'.format(joined_channel))
 
     def _handle_channel_left(self, left_channel):
         self.channels.discard(left_channel)
@@ -74,15 +82,44 @@ class IRCClient(object):
             self.current_channel = None
         elif self.current_channel == left_channel:
             self.current_channel = next(iter(self.channels))
+        self._display_response('Left {}'.format(left_channel))
 
     def _handle_channel_list(self, channel_list):
-        print channel_list
+        if not channel_list:
+            return self._display_response('No active channels')
+        self._display_response('Active channels:')
+        for channel in sorted(channel_list.split(' ')):
+            print '\t{}'.format(channel)
 
-    def _handle_channel_users(self, channel_users):
-        print channel_users
+    def _handle_channel_users(self, channel_list_response):
+        channel_user_list = channel_list_response.split(' ')
+        channel = channel_user_list.pop(0)
+        self._display_response('Users in channel {}:'.format(channel))
+        for username in sorted(channel_user_list):
+            message = '\t{}'.format(username)
+            if username == self.username:
+                message = '\t* {}'.format(username)
+            print message
+
+    def _handle_client_joined_channel(self, join_info):
+        user, channel = join_info.split(' ')
+        self._display_message('{user} joined {channel}'.format(
+            user=user, channel=channel))
+
+    def _handle_client_left_channel(self, leave_info):
+        user, channel = leave_info.split(' ')
+        self._display_message('{user} left {channel}'.format(
+            user=user, channel=channel))
 
     def _handle_nick_change(self, nick):
         self.username = nick
+        self._display_response('Current nick: {}'.format(nick))
+
+    def _handle_private_message(self, message_text):
+        return
+
+    def _handle_public_message(self, message_text):
+        return
 
     def _handle_server_input(self, input_chunk):
         socket_input = ''.join([self.socket_buffer, input_chunk])
@@ -103,7 +140,13 @@ class IRCClient(object):
         return
 
     def _message_handler(self, message_code, message_text):
-        return
+        handlers = {
+            200: self._handle_public_message,
+            201: self._handle_private_message,
+            202: self._handle_client_joined_channel,
+            203: self._handle_client_left_channel
+        }
+        return handlers[message_code](message_text)
 
     def _reply_handler(self, reply_code, reply_text):
         handlers = {

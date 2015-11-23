@@ -25,10 +25,8 @@ REPLY = 'RPL'
 # Message codes
 PUBLIC_MESSAGE = 200
 PRIVATE_MESSAGE = 201
-CLIENT_CONNECTED = 202
-CLIENT_DISCONNECTED = 203
-CLIENT_JOINED_CHANNEL = 204
-CLIENT_LEFT_CHANNEL = 205
+CLIENT_JOINED_CHANNEL = 202
+CLIENT_LEFT_CHANNEL = 203
 
 # Standard reply codes
 NICK_CHANGE_ACCEPTED = 301
@@ -101,8 +99,10 @@ class IRCServer(object):
         username = self.connections[client_socket]['username']
         del self.connections[client_socket]
         del self.users[username]
-        for connection in self.connections:
-            self._send_message(connection, CLIENT_DISCONNECTED)
+
+        # TODO: Send messages for leaving channels
+        # for connection in self.connections:
+        #     self._send_message(connection, CLIENT_DISCONNECTED)
         client_socket.close()
         logging.debug('Client terminated connection: {}'.format(conn_state))
 
@@ -216,7 +216,7 @@ class IRCServer(object):
         client_state['channels'].discard(channel)
         self.connections[client_socket] = client_state
         for other_user in self._get_users_in_channel(channel):
-            receiving_socket = self.users[leaving_username]
+            receiving_socket = self.users[other_user]
             self._send_message(receiving_socket, CLIENT_LEFT_CHANNEL,
                                leaving_username, channel)
         return self._send_reply(client_socket, CHANNEL_LEFT, channel)
