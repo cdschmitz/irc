@@ -304,6 +304,7 @@ class IRCServer(object):
           - Unrecognized public message args, the receiving channel must be
             present
           - Specified channel doesnt exist
+          - User is has not joined the channel to which message was sent
         """
         message_match = PUBLIC_MESSAGE_RE.match(message_args)
         if not message_match:
@@ -314,6 +315,8 @@ class IRCServer(object):
         message = match_dict['message']
         if channel not in self._active_channels:
             return self._send_error(client_socket, NONEXISTENT_CHANNEL)
+
+        # TODO: user is not in channel
 
         sending_username = self.connections[client_socket]['username']
         recipient_usernames = self._get_users_in_channel(channel)
