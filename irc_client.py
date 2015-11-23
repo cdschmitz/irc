@@ -9,12 +9,20 @@ import select
 import socket
 import sys
 
+from termcolor import colored
+
 BUF_SIZE = 4096
 DEFAULT_HOST = 'localhost'
 DEFAULT_PORT = 12000
 MESSAGE_END = '\r\n'
 SOCKET_TIMEOUT = 3
 
+CHANNEL_RE = re.compile(r'^#[_a-zA-Z]\w{0,30}$')
+NICK_RE = re.compile(r'^[_a-zA-Z]\w{0,31}$')
+
+PRIVATE_MESSAGE_RE = re.compile(r'^(?P<username>[_a-zA-Z]\w{0,31}) ')
+PUBLIC_MESSAGE_RE = re.compile(r'^(?P<username>[_a-zA-Z]\w{0,31})'
+                               ' (?P<channel>#[_a-zA-Z]\w{0,30}) ')
 SERVER_RESPONSE_RE = re.compile(r'^(?P<message_type>MSG|RPL|ERROR)'
                                 ' (?P<code>\d{3})(?: |$)')
 USER_COMMAND_RE = re.compile(r'^\s*/(?P<command>[a-z]+)(?: |$)')
@@ -55,20 +63,22 @@ class IRCClient(object):
         }
 
     def _display_intro(self):
-        print '\nChris Schmitz CS494 IRC Client'
-        print 'Type "/help" for list of commands\n'
+        print '\n  Chris Schmitz CS494 IRC Client'
+        print '  Type "/help" for list of commands\n'
 
     def _display_message(self, message):
         sys.stdout.write('\n  *** {}\n'.format(message))
         sys.stdout.flush()
 
-    def _display_response(self, message):
-        sys.stdout.write('*** {}\n'.format(message))
+    def _display_response(self, message, br=False, color='yellow'):
+        br = '\n' if br else ''
+        formatted_msg = '{br}  *** {msg}\n'.format(msg=message, br=br)
+        sys.stdout.write(colored(formatted_msg, color))
         sys.stdout.flush()
 
     def _error_handler(self, error_code, _):
         error = 'ERROR: {}'.format(self.error_text[error_code])
-        self._display_response(error)
+        self._display_response(error, color='red')
 
     def _handle_channel_join(self, joined_channel):
         self.channels.add(joined_channel)
@@ -103,23 +113,41 @@ class IRCClient(object):
 
     def _handle_client_joined_channel(self, join_info):
         user, channel = join_info.split(' ')
-        self._display_message('{user} joined {channel}'.format(
-            user=user, channel=channel))
+        message = '{user} joined {channel}'.format(user=user, channel=channel)
+        self._display_response(message, br=True)
 
     def _handle_client_left_channel(self, leave_info):
         user, channel = leave_info.split(' ')
-        self._display_message('{user} left {channel}'.format(
-            user=user, channel=channel))
+        message = '{user} left {channel}'.format(user=user, channel=channel)
+        self._display_response(message, br=True)
 
-    def _handle_nick_change(self, nick):
-        self.username = nick
-        self._display_response('Current nick: {}'.format(nick))
+    def _handle_nick_change(self, username):
+        self.username = username
+        self._display_response('Current username: {}'.format(username))
 
     def _handle_private_message(self, message_text):
         return
 
     def _handle_public_message(self, message_text):
-        return
+        message_match = PUBLIC_MESSAGE_RE.match(message_text)
+        if message_match:
+            match_text = message_match.group()
+            match_dict = message_match.groupdict()
+            username = match_dict['username']
+            channel = match_dict['channel']
+            linebreak = '\n'
+            color = 'green'
+            if username == self.username:
+                linebreak = ''
+                color = 'cyan'
+
+            message = ('{br}  >>> {channel} {user} {msg}\n'.format(
+                br=linebreak,
+                channel=channel,
+                user=username,
+                msg=message_text[len(match_text):]))
+            sys.stdout.write(colored(message, color))
+            sys.stdout.flush()
 
     def _handle_server_input(self, input_chunk):
         socket_input = ''.join([self.socket_buffer, input_chunk])
