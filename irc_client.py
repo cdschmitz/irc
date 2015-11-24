@@ -54,7 +54,8 @@ class IRCClient(object):
             405: 'Channel already joined',
             406: 'Cannot leave channel that is not joined',
             407: 'Channel does not exist',
-            408: 'User does not exist'
+            408: 'User does not exist',
+            409: 'Must join channel before sending messages'
         }
         self.server_response_handlers = {
             'ERROR': self._error_handler,
@@ -125,6 +126,13 @@ class IRCClient(object):
         self.username = username
         self._display_response('Current username: {}'.format(username))
 
+    def _handle_other_user_nick_change(self, nick_update):
+        old_nick, new_nick = nick_update.split(' ')
+        message = '{old_nick} changed nick to {new_nick}'.format(
+            old_nick=old_nick,
+            new_nick=new_nick)
+        self._display_response(message, br=True)
+
     def _handle_private_message(self, message_text):
         return
 
@@ -172,7 +180,8 @@ class IRCClient(object):
             200: self._handle_public_message,
             201: self._handle_private_message,
             202: self._handle_client_joined_channel,
-            203: self._handle_client_left_channel
+            203: self._handle_client_left_channel,
+            204: self._handle_other_user_nick_change
         }
         return handlers[message_code](message_text)
 
