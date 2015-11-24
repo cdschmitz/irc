@@ -17,6 +17,9 @@ DEFAULT_PORT = 12000
 MESSAGE_END = '\r\n'
 SOCKET_TIMEOUT = 3
 
+CLEAR_LINE = '\x1b[2K\r'
+CURSOR_UP = '\033[1A'
+
 CHANNEL_RE = re.compile(r'^#[_a-zA-Z]\w{0,30}$')
 NICK_RE = re.compile(r'^[_a-zA-Z]\w{0,31}$')
 
@@ -62,6 +65,16 @@ class IRCClient(object):
             'MSG': self._message_handler,
             'RPL': self._reply_handler
         }
+
+    def _clear_lines(self, num_lines=1):
+        if not num_lines:
+            return
+
+        sys.stdout.write(CLEAR_LINE)
+        for _ in range(num_lines - 1):
+            sys.stdout.write(CURSOR_UP)
+            sys.stdout.write(CLEAR_LINE)
+        sys.stdout.flush()
 
     def _display_intro(self):
         print '\n  Chris Schmitz CS494 IRC Client'
@@ -227,7 +240,9 @@ class IRCClient(object):
                         if input_chunk:
                             message = self._translate_user_input(input_chunk)
                             self.client_socket.send(message)
-                        # self._show_prompt()
+                        else:
+                            self._clear_lines(2)
+                            self._show_prompt()
         finally:
             print 'Connection terminated, exiting client'
             self.client_socket.close()
