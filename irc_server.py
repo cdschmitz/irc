@@ -27,6 +27,7 @@ PUBLIC_MESSAGE = 200
 PRIVATE_MESSAGE = 201
 CLIENT_JOINED_CHANNEL = 202
 CLIENT_LEFT_CHANNEL = 203
+NICK_CHANGED = 204
 
 # Standard reply codes
 NICK_CHANGE_ACCEPTED = 301
@@ -45,6 +46,7 @@ CHANNEL_ALREADY_JOINED = 405
 CHANNEL_NOT_JOINED = 406
 NONEXISTENT_CHANNEL = 407
 NONEXISTENT_USER = 408
+USER_NOT_IN_CHANNEL = 409
 
 CHANNEL_RE = re.compile(r'^#[_a-zA-Z]\w{0,30}$')
 NICK_RE = re.compile(r'^[_a-zA-Z]\w{0,31}$')
@@ -106,7 +108,24 @@ class IRCServer(object):
         client_socket.close()
         logging.debug('Client terminated connection: {}'.format(conn_state))
 
+    def _get_connected_users(self, username):
+        """
+        Users are 'connected' if they share at least one channel with the
+        specified username.  Return value is a set of usernames.
+        """
+        client_socket = self.users[username]
+        user_channels = self.connections[client_socket]['channels']
+        connected_users = set(
+            client_state['username']
+            for client_state in self.connections.values()
+            if client_state['channels'].intersection(user_channels))
+        connected_users.discard(username)
+        return connected_users
+
     def _get_users_in_channel(self, channel):
+        """
+        Returns a set of usernames which have joined the specified channel.
+        """
         return set(client_state['username']
                    for client_state in self.connections.values()
                    if channel in client_state['channels'])
@@ -268,7 +287,11 @@ class IRCServer(object):
         del self.users[current_nick]
         client_state['username'] = nick
         self.connections[client_socket] = client_state
-        # TODO: Find 'connected' users, share nick change
+
+        for connected_user in self._get_connected_users(nick):
+            connected_socket = self.users[connected_user]
+            self._send_message(connected_socket, NICK_CHANGED,
+                               current_nick, nick)
 
         return self._send_reply(client_socket, NICK_CHANGE_ACCEPTED, nick)
 
@@ -316,9 +339,11 @@ class IRCServer(object):
         if channel not in self._active_channels:
             return self._send_error(client_socket, NONEXISTENT_CHANNEL)
 
-        # TODO: user is not in channel
+        client_state = self.connections[client_socket]
+        if channel not in client_state['channels']:
+            return self._send_error(client_socket, USER_NOT_IN_CHANNEL)
 
-        sending_username = self.connections[client_socket]['username']
+        sending_username = client_state['username']
         recipient_usernames = self._get_users_in_channel(channel)
         for recipient_username in recipient_usernames:
             receiving_socket = self.users[recipient_username]
