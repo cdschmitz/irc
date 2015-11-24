@@ -98,14 +98,15 @@ class IRCServer(object):
         Remove the client from the list of connections and close the socket
         """
         conn_state = str(client_socket.getpeername())
-        username = self.connections[client_socket]['username']
+        client_state = self.connections[client_socket]
+        username = client_state['username']
+        channels = client_state['channels']
         del self.connections[client_socket]
         del self.users[username]
-
-        # TODO: Send messages for leaving channels
-        # for connection in self.connections:
-        #     self._send_message(connection, CLIENT_DISCONNECTED)
         client_socket.close()
+
+        for channel in channels:
+            self._send_user_left_channel_message(username, channel)
         logging.debug('Client terminated connection: {}'.format(conn_state))
 
     def _get_connected_users(self, username):
@@ -234,10 +235,8 @@ class IRCServer(object):
         leaving_username = client_state['username']
         client_state['channels'].discard(channel)
         self.connections[client_socket] = client_state
-        for other_user in self._get_users_in_channel(channel):
-            receiving_socket = self.users[other_user]
-            self._send_message(receiving_socket, CLIENT_LEFT_CHANNEL,
-                               leaving_username, channel)
+
+        self._send_user_left_channel_message(leaving_username, channel)
         return self._send_reply(client_socket, CHANNEL_LEFT, channel)
 
     def _process_list_command(self, client_socket, channel):
@@ -373,6 +372,15 @@ class IRCServer(object):
             end=MESSAGE_END)
         logging.debug('Response: {}'.format(response))
         return client_socket.send(response)
+
+    def _send_user_left_channel_message(self, username, channel):
+        """
+        Send a message to all remaining clients in the channel that the specified user has left.
+        """
+        for other_user in self._get_users_in_channel(channel):
+            receiving_socket = self.users[other_user]
+            self._send_message(receiving_socket, CLIENT_LEFT_CHANNEL,
+                               username, channel)
 
     def _show_server_state(self):
         """
