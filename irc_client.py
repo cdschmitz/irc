@@ -105,13 +105,14 @@ class IRCClient(object):
         self._display_response(error, color='red')
 
     def _display_help(self):
-        print '\n\t/join #channel'
-        print '\t/leave #channel'
-        print '\t/list [#channel]'
-        print '\t/msg nick message'
-        print '\t/nick newnick'
-        print '\t/quit'
-        print '\t/switch #channel\n'
+        color = 'green'
+        print colored('\n\t/join #channel', color)
+        print colored('\t/leave #channel', color)
+        print colored('\t/list [#channel]', color)
+        print colored('\t/msg nick message', color)
+        print colored('\t/nick newnick', color)
+        print colored('\t/quit', color)
+        print colored('\t/switch #channel\n', color)
 
     def _display_intro(self):
         print '\n  Chris Schmitz CS494 IRC Client'
@@ -128,12 +129,11 @@ class IRCClient(object):
 
     def _handle_channel_join(self, joined_channel):
         """
-        Add the newly joined channel to the set of currently joined channels.
-        If its the first channel joined, make it the current channel.
+        Add the newly joined channel to the set of currently joined channels,
+        and make it the current channel.
         """
         self.channels.add(joined_channel)
-        if not self.current_channel:
-            self.current_channel = joined_channel
+        self.current_channel = joined_channel
         self._display_response('Joined {}'.format(joined_channel))
 
     def _handle_channel_left(self, left_channel):
@@ -177,6 +177,12 @@ class IRCClient(object):
             print colored(message, 'yellow')
 
     def _handle_client_command(self, command, command_args):
+        """
+        Handler for client side only commands that are not sent to the server.
+        The switch command changes the current channel, which specifies where
+        messages are sent (since clients can join multiple channels).
+        The help command displays the list of available commands.
+        """
         if command == '/switch':
             channel = command_args
             if not channel:
@@ -306,6 +312,11 @@ class IRCClient(object):
             print 'Unrecognized server response: {}'.format(message)
 
     def _handle_user_input(self, input_chunk):
+        """
+        User input is translated into commands the server can interpret.
+        By default these are just standard messages. However at least
+        one channel must be joined to chat.
+        """
         server_command = 'MSG'
         channel = self.current_channel
         command_args = '{channel} {msg}'.format(channel=channel,
