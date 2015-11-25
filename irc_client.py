@@ -9,7 +9,12 @@ import select
 import socket
 import sys
 
-from termcolor import colored
+try:
+    from termcolor import colored
+except ImportError:
+    # TODO: Display user message about optional lib
+    def colored(msg, _):
+        return msg
 
 BUF_SIZE = 4096
 DEFAULT_HOST = 'localhost'
@@ -32,6 +37,11 @@ USER_COMMAND_RE = re.compile(r'^\s*/(?P<command>[a-z]+)(?: |$)')
 
 
 class IRCClient(object):
+    """
+    Encapsulates a client connection to an IRC server.
+    An instance of this class is instantiated with a hostname and port number,
+    and represents a single client connection.
+    """
     def __init__(self, host, port):
         client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
@@ -67,6 +77,9 @@ class IRCClient(object):
         }
 
     def _clear_lines(self, num_lines=1):
+        """
+        Clear a specified number of lines recently written to stdout.
+        """
         if not num_lines:
             return
 
@@ -80,27 +93,38 @@ class IRCClient(object):
         print '\n  Chris Schmitz CS494 IRC Client'
         print '  Type "/help" for list of commands\n'
 
-    def _display_message(self, message):
-        sys.stdout.write('\n  *** {}\n'.format(message))
-        sys.stdout.flush()
-
     def _display_response(self, message, br=False, color='yellow'):
+        """
+        Server responses to client commands are specially formatted.
+        """
         br = '\n' if br else ''
         formatted_msg = '{br}  *** {msg}\n'.format(msg=message, br=br)
         sys.stdout.write(colored(formatted_msg, color))
         sys.stdout.flush()
 
     def _error_handler(self, error_code, _):
+        """
+        Errors are displayed to console in red text.
+        """
         error = 'ERROR: {}'.format(self.error_text[error_code])
         self._display_response(error, color='red')
 
     def _handle_channel_join(self, joined_channel):
+        """
+        Add the newly joined channel to the set of currently joined channels.
+        If its the first channel joined, make it the current channel.
+        """
         self.channels.add(joined_channel)
         if not self.current_channel:
             self.current_channel = joined_channel
         self._display_response('Joined {}'.format(joined_channel))
 
     def _handle_channel_left(self, left_channel):
+        """
+        Remove the channel that was left from the set of joined channels.
+        If there are still joined channels remaining, randomly pick one to
+        make current.  Otherwise reset current channel to None.
+        """
         self.channels.discard(left_channel)
         if not self.channels:
             self.current_channel = None
@@ -109,37 +133,59 @@ class IRCClient(object):
         self._display_response('Left {}'.format(left_channel))
 
     def _handle_channel_list(self, channel_list):
+        """
+        List all currently active channels.
+        A '*' indicates the client has joined that channel.
+        """
         if not channel_list:
             return self._display_response('No active channels')
+
         self._display_response('Active channels:')
         for channel in sorted(channel_list.split(' ')):
-            print '\t{}'.format(channel)
+            spacing = '* ' if channel in self.channels else ''
+            message = ''.join(['\t', spacing, channel])
+            print colored(message, 'yellow')
 
     def _handle_channel_users(self, channel_list_response):
+        """
+        List the users in a specified channel.
+        '*' indicates this clients username.
+        """
         channel_user_list = channel_list_response.split(' ')
         channel = channel_user_list.pop(0)
         self._display_response('Users in channel {}:'.format(channel))
         for username in sorted(channel_user_list):
-            message = '\t{}'.format(username)
-            if username == self.username:
-                message = '\t* {}'.format(username)
-            print message
+            spacing = '* ' if username == self.username else ''
+            message = ''.join(['\t', spacing, username])
+            print colored(message, 'yellow')
 
     def _handle_client_joined_channel(self, join_info):
+        """
+        Show message for another client joining a channel.
+        """
         user, channel = join_info.split(' ')
         message = '{user} joined {channel}'.format(user=user, channel=channel)
         self._display_response(message, br=True)
 
     def _handle_client_left_channel(self, leave_info):
+        """
+        Show message for another client leaving a channel.
+        """
         user, channel = leave_info.split(' ')
         message = '{user} left {channel}'.format(user=user, channel=channel)
         self._display_response(message, br=True)
 
     def _handle_nick_change(self, username):
+        """
+        Update current/nick username
+        """
         self.username = username
         self._display_response('Current username: {}'.format(username))
 
     def _handle_other_user_nick_change(self, nick_update):
+        """
+        Inform client that another client changed their nick
+        """
         old_nick, new_nick = nick_update.split(' ')
         message = '{old_nick} changed nick to {new_nick}'.format(
             old_nick=old_nick,
@@ -147,30 +193,70 @@ class IRCClient(object):
         self._display_response(message, br=True)
 
     def _handle_private_message(self, message_text):
-        return
+        """
+        A private message was received.
+        Determine who sent it, then print it to stdout.
+        """
+        message_match = PRIVATE_MESSAGE_RE.match(message_text)
+        if not message_match:
+            return
+
+        match_text = message_match.group()
+        match_dict = message_match.groupdict()
+        username = match_dict['username']
+        linebreak = '\n'
+        color = 'green'
+        if username == self.username:
+            linebreak = ''
+            color = 'cyan'
+
+        message = ('{br}  >>> *{user}*: {msg}\n'.format(
+            br=linebreak,
+            user=username,
+            msg=message_text[len(match_text):]))
+        sys.stdout.write(colored(message, color))
+        sys.stdout.flush()
+
+    def _handle_private_msg_delivered(self, _):
+        """
+        Acknowledge receipt of private message delivery.
+        """
+        pass
 
     def _handle_public_message(self, message_text):
+        """
+        A public message was received.
+        Determine who sent it, and from which channel, then print it to stdout.
+        """
         message_match = PUBLIC_MESSAGE_RE.match(message_text)
-        if message_match:
-            match_text = message_match.group()
-            match_dict = message_match.groupdict()
-            username = match_dict['username']
-            channel = match_dict['channel']
-            linebreak = '\n'
-            color = 'green'
-            if username == self.username:
-                linebreak = ''
-                color = 'cyan'
+        if not message_match:
+            return
 
-            message = ('{br}  >>> {channel} {user} {msg}\n'.format(
-                br=linebreak,
-                channel=channel,
-                user=username,
-                msg=message_text[len(match_text):]))
-            sys.stdout.write(colored(message, color))
-            sys.stdout.flush()
+        match_text = message_match.group()
+        match_dict = message_match.groupdict()
+        username = match_dict['username']
+        channel = match_dict['channel']
+        linebreak = '\n'
+        color = 'green'
+        if username == self.username:
+            linebreak = ''
+            color = 'cyan'
+
+        message = ('{br}  >>> {channel} {user}: {msg}\n'.format(
+            br=linebreak,
+            channel=channel,
+            user=username,
+            msg=message_text[len(match_text):]))
+        sys.stdout.write(colored(message, color))
+        sys.stdout.flush()
 
     def _handle_server_input(self, input_chunk):
+        """
+        Input chunks from the server are combined with the input buffer
+        and split based on message delimiter. Server responses are recognized
+        using a regex to detect the message type and status code, and the
+        appropriate handler is invoked.
+        """
         socket_input = ''.join([self.socket_buffer, input_chunk])
         messages = socket_input.split(MESSAGE_END)
         self.socket_buffer = messages.pop()
@@ -186,9 +272,11 @@ class IRCClient(object):
                 handler(response_code, response_text)
                 continue
             print 'Unrecognized server response: {}'.format(message)
-        return
 
     def _message_handler(self, message_code, message_text):
+        """
+        Handle each type of MSG response from the server
+        """
         handlers = {
             200: self._handle_public_message,
             201: self._handle_private_message,
@@ -199,16 +287,23 @@ class IRCClient(object):
         return handlers[message_code](message_text)
 
     def _reply_handler(self, reply_code, reply_text):
+        """
+        Handle each type of RPL response from the server
+        """
         handlers = {
             301: self._handle_nick_change,
             302: self._handle_channel_join,
             303: self._handle_channel_left,
             304: self._handle_channel_list,
-            305: self._handle_channel_users
+            305: self._handle_channel_users,
+            306: self._handle_private_msg_delivered
         }
         return handlers[reply_code](reply_text)
 
     def _show_prompt(self):
+        """
+        The user prompt reflects the client nick and current channel
+        """
         channel = self.current_channel or '*none*'
         sys.stdout.write('{username} {channel} $ '.format(
             username=self.username,
@@ -220,6 +315,11 @@ class IRCClient(object):
         return message
 
     def connect(self):
+        """
+        Loop infinitely, listening for server socket data and user input from
+        stdin. The program exits when an empty input chunk is received
+        (server disconnected), or the client quits through CTRL-C/QUIT command.
+        """
         self._display_intro()
 
         active = True

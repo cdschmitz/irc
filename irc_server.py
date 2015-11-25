@@ -35,6 +35,7 @@ CHANNEL_JOINED = 302
 CHANNEL_LEFT = 303
 CHANNEL_LIST = 304
 CHANNEL_USERS = 305
+PRIVATE_MSG_DELIVERED = 306
 
 # Error codes
 UNRECOGNIZED_CLIENT_MESSAGE = 400
@@ -148,7 +149,7 @@ class IRCServer(object):
         self.connections[client_socket] = client_state
 
         for message in messages:
-            logging.debug('Received message: {}'.format(message))
+            logging.debug('From client: {!r}'.format(message))
 
             command_match = VALID_CLIENT_MESSAGE_RE.match(message)
             if command_match:
@@ -191,7 +192,7 @@ class IRCServer(object):
         Server does not recognize the format of the client message.
         Respond with an error.
         """
-        logging.debug('Unrecognized message: {}'.format(message))
+        logging.debug('Unrecognized client message: {!r}'.format(message))
         return self._send_error(client_socket, UNRECOGNIZED_CLIENT_MESSAGE)
 
     def _process_join_command(self, client_socket, channel):
@@ -315,8 +316,10 @@ class IRCServer(object):
 
         sending_username = self.connections[client_socket]['username']
         recipient_socket = self.users[recipient_username]
+        # TODO: Send message back to sender
         self._send_message(recipient_socket, PRIVATE_MESSAGE,
                            sending_username, message)
+        self._send_reply(client_socket, PRIVATE_MSG_DELIVERED)
 
     def _process_public_message(self, client_socket, message_args):
         """
@@ -365,17 +368,24 @@ class IRCServer(object):
         return self._send_to_client(client_socket, REPLY, reply_code, *args)
 
     def _send_to_client(self, client_socket, message_type, code, *args):
-        response = '{message_type} {code} {args}{end}'.format(
+        """
+        Construct the message and return the response to the client.
+        """
+        space = ' ' if args else ''
+        response = '{message_type} {code}{space}{args}{end}'.format(
             message_type=message_type,
             code=code,
+            space=space,
             args=' '.join(args),
             end=MESSAGE_END)
-        logging.debug('Response: {}'.format(response))
+
+        logging.debug('Response: {!r}'.format(response))
         return client_socket.send(response)
 
     def _send_user_left_channel_message(self, username, channel):
         """
-        Send a message to all remaining clients in the channel that the specified user has left.
+        Send a message to all remaining clients in the channel that the
+        specified user has left.
         """
         for other_user in self._get_users_in_channel(channel):
             receiving_socket = self.users[other_user]
