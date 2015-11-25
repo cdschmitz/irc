@@ -12,7 +12,9 @@ import sys
 try:
     from termcolor import colored
 except ImportError:
-    # TODO: Display user message about optional lib
+    termcolor_url = 'https://pypi.python.org/pypi/termcolor'
+    print ('>>> termcolor import failed.\n>>> Download from {url} '
+           'for colored output'.format(url=termcolor_url))
     def colored(msg, _):
         return msg
 
@@ -33,7 +35,29 @@ PUBLIC_MESSAGE_RE = re.compile(r'^(?P<username>[_a-zA-Z]\w{0,31})'
                                ' (?P<channel>#[_a-zA-Z]\w{0,30}) ')
 SERVER_RESPONSE_RE = re.compile(r'^(?P<message_type>MSG|RPL|ERROR)'
                                 ' (?P<code>\d{3})(?: |$)')
-USER_COMMAND_RE = re.compile(r'^\s*/(?P<command>[a-z]+)(?: |$)')
+USER_COMMAND_RE = re.compile(r'^\s*(?P<command>/[a-zA-Z]+)(?: |$)')
+
+ERROR_TEXT = {
+    400: 'Invalid command',
+    401: 'Invalid nick format',
+    402: 'Username already set',
+    403: 'Username is not available',
+    404: 'Invalid channel format',
+    405: 'Channel already joined',
+    406: 'Cannot leave channel that is not joined',
+    407: 'Channel does not exist',
+    408: 'User does not exist',
+    409: 'Must join channel before sending messages'
+}
+
+SERVER_COMMAND_MAPPING = {
+    '/join': 'JOIN',
+    '/leave': 'LEAVE',
+    '/list': 'LIST',
+    '/msg': 'PRVMSG',
+    '/nick': 'NICK',
+    '/quit': 'QUIT'
+}
 
 
 class IRCClient(object):
@@ -58,20 +82,8 @@ class IRCClient(object):
         self.socket_buffer = ''
         self.username = None
 
-        self.error_text = {
-            400: 'Invalid command',
-            401: 'Invalid nick format',
-            402: 'Username already set',
-            403: 'Username is not available',
-            404: 'Invalid channel format',
-            405: 'Channel already joined',
-            406: 'Cannot leave channel that is not joined',
-            407: 'Channel does not exist',
-            408: 'User does not exist',
-            409: 'Must join channel before sending messages'
-        }
         self.server_response_handlers = {
-            'ERROR': self._error_handler,
+            'ERROR': self._server_error_handler,
             'MSG': self._message_handler,
             'RPL': self._reply_handler
         }
@@ -89,6 +101,18 @@ class IRCClient(object):
             sys.stdout.write(CLEAR_LINE)
         sys.stdout.flush()
 
+    def _client_error_handler(self, error):
+        self._display_response(error, color='red')
+
+    def _display_help(self):
+        print '\n\t/join #channel'
+        print '\t/leave #channel'
+        print '\t/list [#channel]'
+        print '\t/msg nick message'
+        print '\t/nick newnick'
+        print '\t/quit'
+        print '\t/switch #channel\n'
+
     def _display_intro(self):
         print '\n  Chris Schmitz CS494 IRC Client'
         print '  Type "/help" for list of commands\n'
@@ -101,13 +125,6 @@ class IRCClient(object):
         formatted_msg = '{br}  *** {msg}\n'.format(msg=message, br=br)
         sys.stdout.write(colored(formatted_msg, color))
         sys.stdout.flush()
-
-    def _error_handler(self, error_code, _):
-        """
-        Errors are displayed to console in red text.
-        """
-        error = 'ERROR: {}'.format(self.error_text[error_code])
-        self._display_response(error, color='red')
 
     def _handle_channel_join(self, joined_channel):
         """
@@ -158,6 +175,21 @@ class IRCClient(object):
             spacing = '* ' if username == self.username else ''
             message = ''.join(['\t', spacing, username])
             print colored(message, 'yellow')
+
+    def _handle_client_command(self, command, command_args):
+        if command == '/switch':
+            channel = command_args
+            if not channel:
+                self._client_error_handler('Must specify a channel to chat')
+            elif channel not in self.channels:
+                self._client_error_handler('Channel must be joined before '
+                                           'chatting (use /join command)')
+            else:
+                self.current_channel = channel
+        elif command == '/help':
+            self._display_help()
+        else:
+            self._client_error_handler('Unknown command: {!r}'.format(command))
 
     def _handle_client_joined_channel(self, join_info):
         """
@@ -273,6 +305,32 @@ class IRCClient(object):
                 continue
             print 'Unrecognized server response: {}'.format(message)
 
+    def _handle_user_input(self, input_chunk):
+        server_command = 'MSG'
+        channel = self.current_channel
+        command_args = '{channel} {msg}'.format(channel=channel,
+                                                msg=input_chunk)
+
+        command_match = USER_COMMAND_RE.match(input_chunk)
+        if command_match:
+            match_text = command_match.group()
+            match_dict = command_match.groupdict()
+            command = match_dict['command'].lower()
+            command_args = input_chunk[len(match_text):]
+            if command not in SERVER_COMMAND_MAPPING:
+                self._handle_client_command(command, command_args)
+                return
+            server_command = SERVER_COMMAND_MAPPING[command]
+
+        if server_command == 'MSG' and not channel:
+            self._client_error_handler('Must join a channel to chat')
+            return
+
+        message = '{command} {args}{end}'.format(command=server_command,
+                                                 args=command_args,
+                                                 end=MESSAGE_END)
+        return self.client_socket.send(message)
+
     def _message_handler(self, message_code, message_text):
         """
         Handle each type of MSG response from the server
@@ -300,6 +358,13 @@ class IRCClient(object):
         }
         return handlers[reply_code](reply_text)
 
+    def _server_error_handler(self, error_code, _):
+        """
+        Servers errors are displayed to console in red text.
+        """
+        error = 'ERROR: {}'.format(ERROR_TEXT[error_code])
+        self._display_response(error, color='red')
+
     def _show_prompt(self):
         """
         The user prompt reflects the client nick and current channel
@@ -309,10 +374,6 @@ class IRCClient(object):
             username=self.username,
             channel=channel))
         sys.stdout.flush()
-
-    def _translate_user_input(self, input_chunk):
-        message = ''.join([input_chunk, MESSAGE_END])
-        return message
 
     def connect(self):
         """
@@ -338,13 +399,16 @@ class IRCClient(object):
                     elif ready_source == sys.stdin:
                         input_chunk = sys.stdin.readline().strip()
                         if input_chunk:
-                            message = self._translate_user_input(input_chunk)
-                            self.client_socket.send(message)
+                            message_sent = self._handle_user_input(input_chunk)
+                            if not message_sent:
+                                self._show_prompt()
                         else:
                             self._clear_lines(2)
                             self._show_prompt()
+        except KeyboardInterrupt:
+            pass
         finally:
-            print 'Connection terminated, exiting client'
+            print '\nConnection terminated, exiting client'
             self.client_socket.close()
 
 
