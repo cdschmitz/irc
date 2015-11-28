@@ -38,7 +38,7 @@ SERVER_RESPONSE_RE = re.compile(r'^(?P<message_type>MSG|RPL|ERROR)'
 USER_COMMAND_RE = re.compile(r'^\s*(?P<command>/[a-zA-Z]+)(?: |$)')
 
 ERROR_TEXT = {
-    400: 'Invalid command',
+    400: 'Unrecognized message',
     401: 'Invalid nick format',
     402: 'Username already set',
     403: 'Username is not available',
