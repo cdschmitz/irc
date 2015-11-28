@@ -316,7 +316,6 @@ class IRCServer(object):
 
         sending_username = self.connections[client_socket]['username']
         recipient_socket = self.users[recipient_username]
-        # TODO: Send message back to sender
         self._send_message(recipient_socket, PRIVATE_MESSAGE,
                            sending_username, message)
         self._send_reply(client_socket, PRIVATE_MSG_DELIVERED)
