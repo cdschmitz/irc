@@ -337,9 +337,9 @@ class IRCClient(object):
             self._client_error_handler('Must join a channel to chat')
             return
 
-        message = '{command} {args}{end}'.format(command=server_command,
-                                                 args=command_args,
-                                                 end=MESSAGE_END)
+        message_content = '{command} {args}'.format(command=server_command,
+                                                    args=command_args).strip()
+        message = message_content + MESSAGE_END
         return self.client_socket.send(message)
 
     def _message_handler(self, message_code, message_text):
